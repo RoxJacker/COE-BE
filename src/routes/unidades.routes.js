@@ -6,6 +6,7 @@ import {
   crear,
   actualizar,
   actualizarEstado,
+  eliminar,
 } from '../controllers/unidades.controller.js'
 import { verificarToken } from '../middleware/auth.middleware.js'
 import { soloRoles } from '../middleware/roles.middleware.js'
@@ -31,5 +32,8 @@ router.put('/:id', soloRoles('admin'), actualizar)
 
 // PATCH  /api/unidades/:id/estado — campo u operador
 router.patch('/:id/estado', soloRoles('operador', 'admin', 'campo'), actualizarEstado)
+
+// DELETE /api/unidades/:id — solo admin
+router.delete('/:id', soloRoles('admin'), eliminar)
 
 export default router

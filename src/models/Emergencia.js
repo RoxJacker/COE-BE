@@ -78,6 +78,9 @@ const emergenciaSchema = new mongoose.Schema(
     // Timestamps de negocio
     tiempoReporte: { type: Date, default: Date.now },
     tiempoAsignacion: { type: Date, default: null },
+    // Registrado cuando la unidad en campo presiona "En Escena"
+    // TPR real = tiempoEscena - tiempoReporte
+    tiempoEscena: { type: Date, default: null },
     tiempoCierre: { type: Date, default: null },
     // Telegram: si ya se envió el mensaje de despacho
     telegramEnviado: { type: Boolean, default: false },

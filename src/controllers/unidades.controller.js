@@ -92,3 +92,18 @@ export const actualizarEstado = async (req, res) => {
     res.status(500).json({ mensaje: 'Error al actualizar estado' })
   }
 }
+
+// DELETE /api/unidades/:id — solo admin (soft delete)
+export const eliminar = async (req, res) => {
+  try {
+    const unidad = await Unidad.findByIdAndUpdate(
+      req.params.id,
+      { activa: false },
+      { new: true }
+    )
+    if (!unidad) return res.status(404).json({ mensaje: 'Unidad no encontrada' })
+    res.json({ mensaje: 'Unidad desactivada correctamente', unidad })
+  } catch (error) {
+    res.status(500).json({ mensaje: 'Error al desactivar unidad' })
+  }
+}

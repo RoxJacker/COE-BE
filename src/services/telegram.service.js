@@ -1,9 +1,9 @@
-export const enviarDespacho = async (emergencia, unidad) => {
+export const enviarActualizacionTelegram = async (emergencia, unidad, estadoOverride = null) => {
   const token = process.env.TELEGRAM_BOT_TOKEN
   const chatId = process.env.TELEGRAM_CHAT_ID
 
   if (!token || !chatId) {
-    console.warn('⚠️ Credenciales de Telegram no configuradas. Saltando envío de despacho.')
+    console.warn('⚠️ Credenciales de Telegram no configuradas. Saltando envío de mensaje.')
     return
   }
 
@@ -12,18 +12,30 @@ export const enviarDespacho = async (emergencia, unidad) => {
   const date = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const time = now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
 
+  // Determine state
+  const estado = estadoOverride || emergencia.estado // 'nuevo', 'asignado', 'en_atencion', 'cerrado'
+
+  // Emojis and actions based on state
+  let emoji = '🟡'
+  let actions = `Se despacha unidad ${unidad?.nombre || 'asignada'} para atención.`
+
+  if (estado === 'en_atencion') {
+    emoji = '🔴'
+    actions = `Unidad ${unidad?.nombre || 'asignada'} arribó al lugar. Estado: TRABAJANDO EN ESCENA.`
+  } else if (estado === 'cerrado') {
+    emoji = '🟢'
+    actions = `Servicio finalizado y cerrado. Unidad ${unidad?.nombre || 'asignada'} retorna a base / disponible.`
+  }
+
   // Extract relevant fields safely
   const type = emergencia.catalogoIncidente?.nombre || emergencia.tipo || 'INCIDENTE'
   const notes = emergencia.notas || 'Sin notas.'
   
-  let recursos = unidad.nombre
+  let recursos = unidad?.nombre || 'Unidad asignada'
   if (emergencia.dependenciasApoyo && emergencia.dependenciasApoyo.length > 0) {
-    // Check if dependencias are populated objects or just IDs
     const nombresDeps = emergencia.dependenciasApoyo.map(d => d.nombreCorto || 'Apoyo').join(', ')
-    recursos = `${unidad.nombre}, ${nombresDeps}`
+    recursos = `${recursos}, ${nombresDeps}`
   }
-
-  const actions = `Se despacha unidad ${unidad.nombre} para atención.`
 
   // Construir ubicacion concatenada manualmente
   const calle = emergencia.ubicacion?.calle || ''
@@ -34,7 +46,7 @@ export const enviarDespacho = async (emergencia, unidad) => {
   const ubicacionTexto = `${calle}${numExt}${numInt}, Col. ${col}${refs}`
 
   // Build the exact format requested
-  const message = `🟡 ACTUALIZACION / ${type}
+  const message = `${emoji} ACTUALIZACION / ${type}
 ${date} | ${time} hrs
 
 📍 UBICACIÓN:
@@ -65,9 +77,13 @@ ${actions}
       const errorData = await response.json()
       console.error('❌ Error de Telegram API:', errorData)
     } else {
-      console.log('✅ Despacho enviado a Telegram correctamente.')
+      console.log(`✅ Mensaje de Telegram (${estado}) enviado correctamente.`)
     }
   } catch (error) {
     console.error('❌ Excepción al enviar mensaje a Telegram:', error)
   }
+}
+
+export const enviarDespacho = async (emergencia, unidad) => {
+  return enviarActualizacionTelegram(emergencia, unidad, 'asignado')
 }

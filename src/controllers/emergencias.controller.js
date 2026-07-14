@@ -1,6 +1,6 @@
 import Emergencia from '../models/Emergencia.js'
 import Unidad from '../models/Unidad.js'
-import { enviarDespacho } from '../services/telegram.service.js'
+import { enviarDespacho, enviarActualizacionTelegram } from '../services/telegram.service.js'
 
 // ── GET /api/emergencias ──────────────────────────────────────────────────────
 // Query params: estado, prioridad, desde, hasta, pagina, limite
@@ -135,7 +135,7 @@ export const crear = async (req, res) => {
 
     // Emitir evento Socket.io para que el mapa se actualice en tiempo real
     if (req.io) {
-      req.io.to('operadores').emit('emergencia:nueva', emergencia)
+      req.io.emit('emergencia:nueva', emergencia)
     }
 
     res.status(201).json(emergencia)
@@ -186,7 +186,7 @@ export const actualizar = async (req, res) => {
     await emergencia.populate('unidadAsignada', 'nombre tipo estado')
 
     if (req.io) {
-      req.io.to('operadores').emit('emergencia:actualizada', emergencia)
+      req.io.emit('emergencia:actualizada', emergencia)
     }
 
     res.json(emergencia)
@@ -232,7 +232,7 @@ export const asignarUnidad = async (req, res) => {
     enviarDespacho(emergencia, unidad)
 
     if (req.io) {
-      req.io.to('operadores').emit('emergencia:actualizada', emergencia)
+      req.io.emit('emergencia:actualizada', emergencia)
       req.io.emit('unidad:estado', { unidadId, estado: 'en_camino' })
     }
 
@@ -255,20 +255,43 @@ export const cambiarEstado = async (req, res) => {
     const emergencia = await Emergencia.findById(req.params.id)
     if (!emergencia) return res.status(404).json({ mensaje: 'Emergencia no encontrada' })
 
+    const ahora = new Date()
     emergencia.estado = estado
+
+    // ── Timestamps y efectos de negocio por estado ─────────────────────────
+    if (estado === 'en_atencion') {
+      // La unidad llegó a escena → registrar el momento exacto para calcular TPR
+      if (!emergencia.tiempoEscena) {
+        emergencia.tiempoEscena = ahora
+      }
+    }
+
     if (estado === 'cerrado') {
-      emergencia.tiempoCierre = new Date()
-      // Liberar unidad asignada
+      emergencia.tiempoCierre = ahora
+      // Liberar unidad asignada → disponible de nuevo
       if (emergencia.unidadAsignada) {
         await Unidad.findByIdAndUpdate(emergencia.unidadAsignada, { estado: 'disponible' })
+        if (req.io) {
+          req.io.emit('unidad:estado', { unidadId: emergencia.unidadAsignada.toString(), estado: 'disponible' })
+        }
       }
     }
 
     await emergencia.save()
-    await emergencia.populate('unidadAsignada', 'nombre tipo estado')
+    
+    await emergencia.populate([
+      { path: 'unidadAsignada', select: 'nombre tipo estado responsable' },
+      { path: 'catalogoIncidente', select: 'nombre' },
+      { path: 'dependenciasApoyo', select: 'nombreCorto' }
+    ])
+
+    // Disparar mensaje a Telegram con la actualización de estado de la emergencia
+    if (emergencia.unidadAsignada) {
+      enviarActualizacionTelegram(emergencia, emergencia.unidadAsignada).catch(console.error)
+    }
 
     if (req.io) {
-      req.io.to('operadores').emit('emergencia:actualizada', emergencia)
+      req.io.emit('emergencia:actualizada', emergencia)
     }
 
     res.json(emergencia)
@@ -277,6 +300,7 @@ export const cambiarEstado = async (req, res) => {
     res.status(500).json({ mensaje: 'Error al cambiar estado' })
   }
 }
+
 
 // ── GET /api/emergencias/stats ────────────────────────────────────────────────
 export const obtenerEstadisticas = async (req, res) => {
@@ -325,6 +349,38 @@ export const obtenerEstadisticas = async (req, res) => {
     let tiempoDespachoTrend = 0
     if (tiempoAyer > 0) {
       tiempoDespachoTrend = ((tiempoHoy - tiempoAyer) / tiempoAyer) * 100
+    }
+
+    // === 1b. Tiempos Promedio de Respuesta Real (TPR) (Hoy vs Ayer) ===
+    const calcTiempoRespuesta = (matchQuery) => {
+      return Emergencia.aggregate([
+        { $match: { ...matchQuery, tiempoEscena: { $ne: null }, tiempoReporte: { $ne: null } } },
+        {
+          $project: {
+            tiempo: { $divide: [{ $subtract: ['$tiempoEscena', '$tiempoReporte'] }, 60000] }
+          }
+        },
+        { $group: { _id: null, promedio: { $avg: '$tiempo' } } }
+      ])
+    }
+
+    const tprHoyRes = await calcTiempoRespuesta({ tiempoReporte: { $gte: inicioHoy } })
+    const tprAyerRes = await calcTiempoRespuesta({ tiempoReporte: { $gte: inicioAyer, $lt: inicioHoy } })
+
+    let tprPromedioGlobal = 0
+    if (tprHoyRes.length === 0) {
+      const tprGlobalRes = await calcTiempoRespuesta({})
+      tprPromedioGlobal = tprGlobalRes.length > 0 ? tprGlobalRes[0].promedio : 0
+    } else {
+      tprPromedioGlobal = tprHoyRes[0].promedio
+    }
+
+    const tprHoy = tprHoyRes.length > 0 ? tprHoyRes[0].promedio : tprPromedioGlobal
+    const tprAyer = tprAyerRes.length > 0 ? tprAyerRes[0].promedio : tprHoy
+
+    let tprTrend = 0
+    if (tprAyer > 0) {
+      tprTrend = ((tprHoy - tprAyer) / tprAyer) * 100
     }
 
     // === 2. Emergencias Hoy (Hoy vs Ayer) ===
@@ -420,6 +476,8 @@ export const obtenerEstadisticas = async (req, res) => {
       tacticos: {
         tiempoDespacho: tiempoHoy,
         tiempoDespachoTrend,
+        tiempoRespuesta: tprHoy,
+        tiempoRespuestaTrend: tprTrend,
         emergenciasHoy: emergenciasHoyCount,
         emergenciasTrend,
         flota,

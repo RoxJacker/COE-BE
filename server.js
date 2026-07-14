@@ -9,6 +9,7 @@ import authRoutes from './src/routes/auth.routes.js'
 import catalogosRoutes from './src/routes/catalogos.routes.js'
 import emergenciasRoutes from './src/routes/emergencias.routes.js'
 import unidadesRoutes from './src/routes/unidades.routes.js'
+import usuariosRoutes from './src/routes/usuarios.routes.js'
 import Unidad from './src/models/Unidad.js'
 
 // ── Conectar base de datos ────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/catalogos', catalogosRoutes)
 app.use('/api/emergencias', emergenciasRoutes)
 app.use('/api/unidades', unidadesRoutes)
+app.use('/api/usuarios', usuariosRoutes)
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
